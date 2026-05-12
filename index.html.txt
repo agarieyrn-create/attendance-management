@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>勤怠管理システム</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <?!= include('css'); ?>
+</head>
+<body>
+  <!-- ログイン画面 -->
+  <div id="login-screen" class="screen active">
+    <div class="login-container">
+      <div class="login-header">
+        <i class="fas fa-clock"></i>
+        <h1>勤怠管理システム</h1>
+      </div>
+      <div class="login-form">
+        <div class="form-group">
+          <label for="employee-select">社員を選択</label>
+          <select id="employee-select" class="form-control">
+            <option value="">選択してください</option>
+          </select>
+        </div>
+        <button id="login-btn" class="btn btn-primary btn-block">
+          <i class="fas fa-sign-in-alt"></i> ログイン
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- メイン画面 -->
+  <div id="main-screen" class="screen">
+    <!-- ヘッダー -->
+    <header class="header">
+      <div class="header-left">
+        <button id="menu-toggle" class="menu-toggle">
+          <i class="fas fa-bars"></i>
+        </button>
+        <h1 class="header-title">勤怠管理</h1>
+      </div>
+      <div class="header-right">
+        <span id="current-user" class="current-user"></span>
+        <button id="logout-btn" class="btn btn-sm btn-outline">
+          <i class="fas fa-sign-out-alt"></i>
+        </button>
+      </div>
+    </header>
+
+    <!-- サイドバー -->
+    <nav id="sidebar" class="sidebar">
+      <ul class="nav-menu">
+        <li class="nav-item active" data-page="dashboard">
+          <i class="fas fa-home"></i>
+          <span>ダッシュボード</span>
+        </li>
+        <li class="nav-item" data-page="attendance">
+          <i class="fas fa-clock"></i>
+          <span>勤怠記録</span>
+        </li>
+        <li class="nav-item" data-page="leave">
+          <i class="fas fa-calendar-alt"></i>
+          <span>休暇申請</span>
+        </li>
+        <li class="nav-item" data-page="leave-balance">
+          <i class="fas fa-battery-three-quarters"></i>
+          <span>休暇残数</span>
+        </li>
+        <li class="nav-item" data-page="overtime">
+          <i class="fas fa-chart-line"></i>
+          <span>残業状況</span>
+        </li>
+        <li class="nav-item" data-page="documents">
+          <i class="fas fa-book"></i>
+          <span>規程・マニュアル</span>
+        </li>
+        <li class="nav-item manager-only" data-page="approval">
+          <i class="fas fa-check-circle"></i>
+          <span>承認待ち</span>
+          <span id="pending-badge" class="badge hidden">0</span>
+        </li>
+        <li class="nav-item admin-only" data-page="admin">
+          <i class="fas fa-cog"></i>
+          <span>管理者設定</span>
+        </li>
+      </ul>
+    </nav>
+
+    <!-- メインコンテンツ -->
+    <main class="main-content">
+      <!-- ダッシュボード -->
+      <div id="page-dashboard" class="page active">
+        <div class="page-header">
+          <h2>ダッシュボード</h2>
+          <p id="today-date" class="today-date"></p>
+        </div>
+
+        <!-- 打刻セクション -->
+        <div class="punch-section card">
+          <div class="punch-status" id="punch-status">
+            <div class="status-icon">
+              <i class="fas fa-user-clock"></i>
+            </div>
+            <div class="status-text">
+              <span id="status-label">読み込み中...</span>
+              <span id="status-time"></span>
+            </div>
+          </div>
+          <div class="punch-buttons">
+            <button id="clock-in-btn" class="btn btn-success btn-lg">
+              <i class="fas fa-sign-in-alt"></i> 出勤
+            </button>
+            <button id="clock-out-btn" class="btn btn-danger btn-lg">
+              <i class="fas fa-sign-out-alt"></i> 退勤
+            </button>
+          </div>
+          <div id="punch-message" class="punch-message"></div>
+        </div>
+
+        <!-- サマリーカード -->
+        <div class="summary-cards">
+          <div class="summary-card">
+            <div class="summary-icon bg-blue">
+              <i class="fas fa-clock"></i>
+            </div>
+            <div class="summary-content">
+              <span class="summary-label">今月の残業</span>
+              <span id="monthly-overtime" class="summary-value">--:--</span>
+            </div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-icon bg-green">
+              <i class="fas fa-umbrella-beach"></i>
+            </div>
+            <div class="summary-content">
+              <span class="summary-label">有給残数</span>
+              <span id="leave-remaining" class="summary-value">-- 日</span>
+            </div>
+          </div>
+          <div class="summary-card">
+            <div class="summary-icon bg-orange">
+              <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <div class="summary-content">
+              <span class="summary-label">36協定</span>
+              <span id="agreement-status" class="summary-value">--</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 直近の勤怠 -->
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-history"></i> 直近の勤怠記録</h3>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="recent-attendance-table">
+                <thead>
+                  <tr>
+                    <th>日付</th>
+                    <th>出勤</th>
+                    <th>退勤</th>
+                    <th>実働</th>
+                    <th>残業</th>
+                  </tr>
+                </thead>
+                <tbody id="recent-attendance-body">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 勤怠記録ページ -->
+      <div id="page-attendance" class="page">
+        <div class="page-header">
+          <h2>勤怠記録</h2>
+          <div class="page-actions">
+            <input type="month" id="attendance-month" class="form-control">
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="attendance-table">
+                <thead>
+                  <tr>
+                    <th>日付</th>
+                    <th>曜日</th>
+                    <th>区分</th>
+                    <th>出勤</th>
+                    <th>退勤</th>
+                    <th>休憩</th>
+                    <th>実働</th>
+                    <th>残業</th>
+                    <th>備考</th>
+                  </tr>
+                </thead>
+                <tbody id="attendance-body">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- 月間集計 -->
+        <div class="card mt-3">
+          <div class="card-header">
+            <h3><i class="fas fa-calculator"></i> 月間集計</h3>
+          </div>
+          <div class="card-body">
+            <div class="stats-grid">
+              <div class="stat-item">
+                <span class="stat-label">出勤日数</span>
+                <span id="stat-work-days" class="stat-value">--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">実労働時間</span>
+                <span id="stat-actual-hours" class="stat-value">--:--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">残業時間</span>
+                <span id="stat-overtime" class="stat-value">--:--</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">深夜残業</span>
+                <span id="stat-night-hours" class="stat-value">--:--</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 休暇申請ページ -->
+      <div id="page-leave" class="page">
+        <div class="page-header">
+          <h2>休暇申請</h2>
+          <button id="new-leave-btn" class="btn btn-primary">
+            <i class="fas fa-plus"></i> 新規申請
+          </button>
+        </div>
+
+        <!-- 申請フォーム -->
+        <div id="leave-form-card" class="card hidden">
+          <div class="card-header">
+            <h3><i class="fas fa-edit"></i> 休暇申請フォーム</h3>
+            <button id="close-leave-form" class="btn btn-sm btn-outline">
+              <i class="fas fa-times"></i>
+            </button>
+          </div>
+          <div class="card-body">
+            <form id="leave-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="leave-type">休暇種類 <span class="required">*</span></label>
+                  <select id="leave-type" class="form-control" required>
+                    <option value="">選択してください</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label for="leave-unit">取得単位 <span class="required">*</span></label>
+                  <select id="leave-unit" class="form-control" required>
+                    <option value="全日">全日</option>
+                    <option value="午前">午前半休</option>
+                    <option value="午後">午後半休</option>
+                    <option value="時間">時間単位</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="leave-start">開始日 <span class="required">*</span></label>
+                  <input type="date" id="leave-start" class="form-control" required>
+                </div>
+                <div class="form-group">
+                  <label for="leave-end">終了日 <span class="required">*</span></label>
+                  <input type="date" id="leave-end" class="form-control" required>
+                </div>
+              </div>
+              <div id="hours-group" class="form-group hidden">
+                <label for="leave-hours">時間数</label>
+                <input type="number" id="leave-hours" class="form-control" min="1" max="8">
+              </div>
+              <div class="form-group">
+                <label for="leave-reason">申請理由 <span class="required">*</span></label>
+                <textarea id="leave-reason" class="form-control" rows="3" required></textarea>
+              </div>
+              <div class="form-actions">
+                <button type="button" id="cancel-leave-btn" class="btn btn-outline">キャンセル</button>
+                <button type="submit" class="btn btn-primary">
+                  <i class="fas fa-paper-plane"></i> 申請する
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- 申請一覧 -->
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-list"></i> 申請履歴</h3>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="leave-requests-table">
+                <thead>
+                  <tr>
+                    <th>申請日</th>
+                    <th>休暇種類</th>
+                    <th>期間</th>
+                    <th>日数</th>
+                    <th>理由</th>
+                    <th>ステータス</th>
+                  </tr>
+                </thead>
+                <tbody id="leave-requests-body">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 休暇残数ページ -->
+      <div id="page-leave-balance" class="page">
+        <div class="page-header">
+          <h2>休暇残数</h2>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="leave-balance-table">
+                <thead>
+                  <tr>
+                    <th>休暇種類</th>
+                    <th>繰越</th>
+                    <th>付与</th>
+                    <th>使用</th>
+                    <th>残数</th>
+                    <th>残数バー</th>
+                  </tr>
+                </thead>
+                <tbody id="leave-balance-body">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 残業状況ページ -->
+      <div id="page-overtime" class="page">
+        <div class="page-header">
+          <h2>残業状況・36協定</h2>
+        </div>
+
+        <!-- 36協定ステータス -->
+        <div id="agreement-card" class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-gavel"></i> 36協定ステータス</h3>
+          </div>
+          <div class="card-body">
+            <div id="agreement-status-display" class="agreement-status">
+              <div class="status-badge">
+                <span id="agreement-badge" class="badge badge-lg">--</span>
+              </div>
+              <div id="agreement-warnings" class="warnings-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 残業グラフ -->
+        <div class="stats-cards">
+          <div class="card">
+            <div class="card-header">
+              <h3><i class="fas fa-chart-bar"></i> 月間残業時間</h3>
+            </div>
+            <div class="card-body">
+              <div class="progress-container">
+                <div class="progress-header">
+                  <span>今月の残業</span>
+                  <span id="monthly-overtime-detail">--:-- / 45:00</span>
+                </div>
+                <div class="progress-bar">
+                  <div id="monthly-overtime-bar" class="progress-fill" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h3><i class="fas fa-chart-line"></i> 年間残業時間</h3>
+            </div>
+            <div class="card-body">
+              <div class="progress-container">
+                <div class="progress-header">
+                  <span>年間累計</span>
+                  <span id="yearly-overtime-detail">--:-- / 360:00</span>
+                </div>
+                <div class="progress-bar">
+                  <div id="yearly-overtime-bar" class="progress-fill" style="width: 0%"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 詳細情報 -->
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-info-circle"></i> 詳細情報</h3>
+          </div>
+          <div class="card-body">
+            <div class="info-grid">
+              <div class="info-item">
+                <span class="info-label">月間上限</span>
+                <span id="info-monthly-limit" class="info-value">45時間</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">年間上限</span>
+                <span id="info-yearly-limit" class="info-value">360時間</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">特別条項適用月</span>
+                <span id="info-special-months" class="info-value">0 / 6回</span>
+              </div>
+              <div class="info-item">
+                <span class="info-label">深夜残業（今月）</span>
+                <span id="info-night-hours" class="info-value">--:--</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 規程・マニュアルページ -->
+      <div id="page-documents" class="page">
+        <div class="page-header">
+          <h2>規程・マニュアル</h2>
+        </div>
+
+        <div class="document-grid">
+          <!-- 就業規則 -->
+          <div class="document-card" onclick="openDocument('work-rules')">
+            <div class="document-icon">
+              <i class="fas fa-gavel"></i>
+            </div>
+            <div class="document-info">
+              <h3>就業規則</h3>
+              <p>勤務時間、休日、服務規律など</p>
+              <span class="document-date">最終更新: 2024/04/01</span>
+            </div>
+          </div>
+
+          <!-- 休暇規程 -->
+          <div class="document-card" onclick="openDocument('leave-rules')">
+            <div class="document-icon">
+              <i class="fas fa-calendar-check"></i>
+            </div>
+            <div class="document-info">
+              <h3>休暇規程</h3>
+              <p>有給休暇、特別休暇、育児・介護休暇など</p>
+              <span class="document-date">最終更新: 2024/04/01</span>
+            </div>
+          </div>
+
+          <!-- 勤怠管理マニュアル -->
+          <div class="document-card" onclick="openDocument('attendance-manual')">
+            <div class="document-icon">
+              <i class="fas fa-clock"></i>
+            </div>
+            <div class="document-info">
+              <h3>勤怠管理マニュアル</h3>
+              <p>打刻方法、申請手順、承認フローなど</p>
+              <span class="document-date">最終更新: 2024/10/01</span>
+            </div>
+          </div>
+
+          <!-- 36協定について -->
+          <div class="document-card" onclick="openDocument('agreement-36')">
+            <div class="document-icon">
+              <i class="fas fa-balance-scale"></i>
+            </div>
+            <div class="document-info">
+              <h3>36協定について</h3>
+              <p>残業上限、特別条項、届出について</p>
+              <span class="document-date">最終更新: 2024/04/01</span>
+            </div>
+          </div>
+
+          <!-- テレワーク規程 -->
+          <div class="document-card" onclick="openDocument('telework-rules')">
+            <div class="document-icon">
+              <i class="fas fa-home"></i>
+            </div>
+            <div class="document-info">
+              <h3>テレワーク規程</h3>
+              <p>在宅勤務の申請、勤怠管理、環境整備など</p>
+              <span class="document-date">最終更新: 2024/07/01</span>
+            </div>
+          </div>
+
+          <!-- よくある質問 -->
+          <div class="document-card" onclick="openDocument('faq')">
+            <div class="document-icon">
+              <i class="fas fa-question-circle"></i>
+            </div>
+            <div class="document-info">
+              <h3>よくある質問（FAQ）</h3>
+              <p>勤怠・休暇に関するQ&A</p>
+              <span class="document-date">最終更新: 2024/11/01</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 承認ページ（管理者・上長用） -->
+      <div id="page-approval" class="page">
+        <div class="page-header">
+          <h2>承認待ち申請</h2>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <div id="pending-requests-container">
+              <div class="table-responsive">
+                <table class="table" id="pending-requests-table">
+                  <thead>
+                    <tr>
+                      <th>申請者</th>
+                      <th>部署</th>
+                      <th>休暇種類</th>
+                      <th>期間</th>
+                      <th>日数</th>
+                      <th>理由</th>
+                      <th>申請日時</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pending-requests-body">
+                  </tbody>
+                </table>
+              </div>
+              <div id="no-pending-message" class="empty-message hidden">
+                <i class="fas fa-check-circle"></i>
+                <p>承認待ちの申請はありません</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 管理者設定ページ -->
+      <div id="page-admin" class="page">
+        <div class="page-header">
+          <h2>管理者設定</h2>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3><i class="fas fa-users"></i> 従業員一覧</h3>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="employees-table">
+                <thead>
+                  <tr>
+                    <th>社員ID</th>
+                    <th>氏名</th>
+                    <th>部署</th>
+                    <th>役職</th>
+                    <th>勤務形態</th>
+                    <th>権限</th>
+                    <th>ステータス</th>
+                  </tr>
+                </thead>
+                <tbody id="employees-body">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mt-3">
+          <div class="card-header">
+            <h3><i class="fas fa-exclamation-triangle"></i> 36協定アラート一覧</h3>
+          </div>
+          <div class="card-body">
+            <div class="table-responsive">
+              <table class="table" id="alerts-table">
+                <thead>
+                  <tr>
+                    <th>社員名</th>
+                    <th>部署</th>
+                    <th>月間残業</th>
+                    <th>年間残業</th>
+                    <th>ステータス</th>
+                    <th>警告内容</th>
+                  </tr>
+                </thead>
+                <tbody id="alerts-body">
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 承認モーダル -->
+  <div id="approval-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>休暇申請の承認</h3>
+        <button class="modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="approval-details"></div>
+        <div class="form-group">
+          <label for="approval-comment">コメント（任意）</label>
+          <textarea id="approval-comment" class="form-control" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="reject-btn" class="btn btn-danger">
+          <i class="fas fa-times"></i> 却下
+        </button>
+        <button id="approve-btn" class="btn btn-success">
+          <i class="fas fa-check"></i> 承認
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ドキュメント詳細モーダル -->
+  <div id="document-modal" class="modal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h3 id="document-title">ドキュメント</h3>
+        <button class="modal-close" onclick="closeDocumentModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="document-content" class="document-content"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline" onclick="closeDocumentModal()">閉じる</button>
+        <button class="btn btn-primary" onclick="printDocument()">
+          <i class="fas fa-print"></i> 印刷
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ローディング -->
+  <div id="loading" class="loading hidden">
+    <div class="loading-spinner"></div>
+  </div>
+
+  <!-- トースト通知 -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script>
+    // サーバーから渡された初期データ
+    var INITIAL_DATA = {
+      employees: <?!= initialEmployees ?>,
+      workPatterns: <?!= initialWorkPatterns ?>,
+      leaveTypes: <?!= initialLeaveTypes ?>
+    };
+  </script>
+
+  <?!= include('javascript'); ?>
+</body>
+</html>

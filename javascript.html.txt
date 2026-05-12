@@ -1,0 +1,1516 @@
+<script>
+// ========================================
+// Global Variables
+// ========================================
+var currentEmployee = null;
+var dashboardData = null;
+var leaveTypesCache = null;
+var pendingRequestsCache = null;
+var employeesCache = null;
+var workPatternsCache = null;
+var cacheTimestamp = null;
+var CACHE_DURATION = 5 * 60 * 1000;
+
+// ========================================
+// Initialization
+// ========================================
+document.addEventListener('DOMContentLoaded', function() {
+  initializeApp();
+});
+
+function initializeApp() {
+  // 初期データをキャッシュに設定
+  if (typeof INITIAL_DATA !== 'undefined') {
+    if (INITIAL_DATA.employees && INITIAL_DATA.employees.length > 0) {
+      employeesCache = INITIAL_DATA.employees;
+    }
+    if (INITIAL_DATA.workPatterns && INITIAL_DATA.workPatterns.length > 0) {
+      workPatternsCache = INITIAL_DATA.workPatterns;
+    }
+    if (INITIAL_DATA.leaveTypes && INITIAL_DATA.leaveTypes.length > 0) {
+      leaveTypesCache = INITIAL_DATA.leaveTypes;
+    }
+  }
+  
+  setupEventListeners();
+  setTodayDate();
+  loadEmployeeList();
+}
+
+// ========================================
+// Event Listeners
+// ========================================
+function setupEventListeners() {
+  // Login
+  document.getElementById('login-btn').addEventListener('click', handleLogin);
+  document.getElementById('logout-btn').addEventListener('click', handleLogout);
+
+  // Navigation
+  document.getElementById('menu-toggle').addEventListener('click', toggleSidebar);
+  var navItems = document.querySelectorAll('.nav-item');
+  for (var i = 0; i < navItems.length; i++) {
+    (function(item) {
+      item.addEventListener('click', function() {
+        navigateTo(item.dataset.page);
+      });
+    })(navItems[i]);
+  }
+
+  // Punch buttons
+  document.getElementById('clock-in-btn').addEventListener('click', handleClockIn);
+  document.getElementById('clock-out-btn').addEventListener('click', handleClockOut);
+
+  // Leave form
+  document.getElementById('new-leave-btn').addEventListener('click', showLeaveForm);
+  document.getElementById('close-leave-form').addEventListener('click', hideLeaveForm);
+  document.getElementById('cancel-leave-btn').addEventListener('click', hideLeaveForm);
+  document.getElementById('leave-form').addEventListener('submit', handleLeaveSubmit);
+  document.getElementById('leave-unit').addEventListener('change', handleLeaveUnitChange);
+  document.getElementById('leave-start').addEventListener('change', function() {
+    var endDate = document.getElementById('leave-end');
+    if (!endDate.value || endDate.value < this.value) {
+      endDate.value = this.value;
+    }
+  });
+
+  // Attendance month picker
+  var attendanceMonth = document.getElementById('attendance-month');
+  var debounceTimer = null;
+  attendanceMonth.addEventListener('change', function() {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+    }
+    debounceTimer = setTimeout(function() {
+      loadAttendanceData();
+    }, 300);
+  });
+
+  // Modal
+  var modalCloseButtons = document.querySelectorAll('.modal-close');
+  for (var j = 0; j < modalCloseButtons.length; j++) {
+    modalCloseButtons[j].addEventListener('click', function() {
+      closeModal();
+      closeDocumentModal();
+    });
+  }
+  document.getElementById('approve-btn').addEventListener('click', function() {
+    handleApproval(true);
+  });
+  document.getElementById('reject-btn').addEventListener('click', function() {
+    handleApproval(false);
+  });
+
+  // Close sidebar on mobile when clicking outside
+  document.addEventListener('click', function(e) {
+    var sidebar = document.getElementById('sidebar');
+    var menuToggle = document.getElementById('menu-toggle');
+    if (window.innerWidth <= 768 && 
+        !sidebar.contains(e.target) && 
+        !menuToggle.contains(e.target) &&
+        sidebar.classList.contains('open')) {
+      sidebar.classList.remove('open');
+    }
+  });
+}
+
+// ========================================
+// Cache Management
+// ========================================
+function isCacheValid() {
+  return cacheTimestamp && (Date.now() - cacheTimestamp) < CACHE_DURATION;
+}
+
+function invalidateCache() {
+  dashboardData = null;
+  pendingRequestsCache = null;
+  cacheTimestamp = null;
+}
+
+// ========================================
+// Server Communication Functions
+// ========================================
+function loadEmployeeList() {
+  // キャッシュがあればそれを使用
+  if (employeesCache && employeesCache.length > 0) {
+    populateEmployeeSelect(employeesCache);
+    return;
+  }
+
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(employees) {
+      hideLoading();
+      
+      if (!employees || !Array.isArray(employees) || employees.length === 0) {
+        console.error('従業員データが取得できませんでした:', employees);
+        showToast('従業員データの取得に失敗しました', 'error');
+        return;
+      }
+      
+      employeesCache = employees;
+      populateEmployeeSelect(employees);
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error loading employees:', error);
+      showToast('従業員リストの読み込みに失敗しました', 'error');
+    })
+    .testGetEmployeesForWeb();
+}
+
+function populateEmployeeSelect(employees) {
+  var select = document.getElementById('employee-select');
+  var fragment = document.createDocumentFragment();
+  
+  var defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = '選択してください';
+  fragment.appendChild(defaultOption);
+  
+  for (var i = 0; i < employees.length; i++) {
+    var emp = employees[i];
+    var option = document.createElement('option');
+    option.value = emp.id;
+    option.textContent = emp.name + ' (' + emp.department + ')';
+    fragment.appendChild(option);
+  }
+  
+  select.innerHTML = '';
+  select.appendChild(fragment);
+}
+
+function loadDashboard() {
+  if (!currentEmployee) return;
+  
+  // キャッシュが有効ならそれを使用
+  if (dashboardData && isCacheValid()) {
+    renderDashboard(dashboardData);
+    return;
+  }
+  
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(data) {
+      hideLoading();
+      
+      if (!data) {
+        showToast('ダッシュボードデータの取得に失敗しました', 'error');
+        return;
+      }
+      
+      dashboardData = data;
+      cacheTimestamp = Date.now();
+      renderDashboard(data);
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error loading dashboard:', error);
+      showToast('ダッシュボードの読み込みに失敗しました', 'error');
+    })
+    .getDashboardData(currentEmployee.id);
+}
+
+function renderDashboard(data) {
+  // Update punch status
+  if (data.today && data.today.status) {
+    updatePunchStatus(data.today.status);
+  }
+  
+  // Update summary cards
+  if (data.overtime && data.overtime.monthly) {
+    var monthlyOvertimeEl = document.getElementById('monthly-overtime');
+    monthlyOvertimeEl.textContent = data.overtime.monthly && data.overtime.monthly.overtime ? data.overtime.monthly.overtime : '--:--';
+    
+    var agreementStatusEl = document.getElementById('agreement-status');
+    var status = data.overtime.status || '--';
+    agreementStatusEl.textContent = status;
+    agreementStatusEl.className = 'summary-value';
+    if (status === '警告') {
+      agreementStatusEl.classList.add('text-warning');
+    } else if (status === '超過') {
+      agreementStatusEl.classList.add('text-danger');
+    } else if (status === '正常') {
+      agreementStatusEl.classList.add('text-success');
+    }
+  }
+  
+  // Update leave balance
+  if (data.leaveBalance && Array.isArray(data.leaveBalance)) {
+    var paidLeave = null;
+    for (var i = 0; i < data.leaveBalance.length; i++) {
+      if (data.leaveBalance[i].leaveTypeId === 'LEAVE001') {
+        paidLeave = data.leaveBalance[i];
+        break;
+      }
+    }
+    if (paidLeave) {
+      document.getElementById('leave-remaining').textContent = paidLeave.remaining + ' 日';
+    }
+  }
+  
+  // Update recent attendance
+  if (data.recentAttendance) {
+    updateRecentAttendance(data.recentAttendance);
+  }
+  
+  // Update pending badge
+  if (data.pendingRequests) {
+    pendingRequestsCache = data.pendingRequests;
+    var badge = document.getElementById('pending-badge');
+    var count = data.pendingRequests.length;
+    badge.textContent = count;
+    if (count === 0) {
+      badge.classList.add('hidden');
+    } else {
+      badge.classList.remove('hidden');
+    }
+  }
+}
+
+function handleClockIn() {
+  if (!currentEmployee) return;
+  
+  showLoading();
+  document.getElementById('clock-in-btn').disabled = true;
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result && result.success) {
+        showToast('出勤打刻が完了しました', 'success');
+        showPunchMessage('出勤打刻が完了しました', 'success');
+        invalidateCache();
+        loadDashboard();
+      } else {
+        var message = result && result.message ? result.message : '出勤打刻に失敗しました';
+        showToast(message, 'error');
+        showPunchMessage(message, 'error');
+        document.getElementById('clock-in-btn').disabled = false;
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Clock in error:', error);
+      showToast('出勤打刻に失敗しました', 'error');
+      showPunchMessage('出勤打刻に失敗しました', 'error');
+      document.getElementById('clock-in-btn').disabled = false;
+    })
+    .clockIn(currentEmployee.id, 'Web', '');
+}
+
+function handleClockOut() {
+  if (!currentEmployee) return;
+  
+  showLoading();
+  document.getElementById('clock-out-btn').disabled = true;
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result && result.success) {
+        showToast('退勤打刻が完了しました', 'success');
+        showPunchMessage('退勤打刻が完了しました', 'success');
+        invalidateCache();
+        loadDashboard();
+      } else {
+        var message = result && result.message ? result.message : '退勤打刻に失敗しました';
+        showToast(message, 'error');
+        showPunchMessage(message, 'error');
+        document.getElementById('clock-out-btn').disabled = false;
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Clock out error:', error);
+      showToast('退勤打刻に失敗しました', 'error');
+      showPunchMessage('退勤打刻に失敗しました', 'error');
+      document.getElementById('clock-out-btn').disabled = false;
+    })
+    .clockOut(currentEmployee.id, 'Web', '');
+}
+
+function loadAttendanceData() {
+  if (!currentEmployee) return;
+  
+  var monthInput = document.getElementById('attendance-month');
+  if (!monthInput.value) {
+    var now = new Date();
+    var year = now.getFullYear();
+    var month = String(now.getMonth() + 1).padStart(2, '0');
+    monthInput.value = year + '-' + month;
+  }
+  
+  var yearMonth = monthInput.value.replace('-', '/');
+  
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(records) {
+      hideLoading();
+      
+      if (!records) {
+        records = [];
+      }
+      
+      renderAttendanceTable(records, yearMonth);
+      calculateMonthlyStats(records);
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error loading attendance:', error);
+      showToast('勤怠データの読み込みに失敗しました', 'error');
+    })
+    .getMonthlyAttendance(currentEmployee.id, yearMonth);
+}
+
+function loadLeaveData() {
+  if (!currentEmployee) return;
+  
+  showLoading();
+  
+  // 休暇種類はキャッシュを使用
+  if (leaveTypesCache && leaveTypesCache.length > 0) {
+    populateLeaveTypeSelect(leaveTypesCache);
+    loadLeaveRequests();
+  } else {
+    google.script.run
+      .withSuccessHandler(function(leaveTypes) {
+        leaveTypesCache = leaveTypes;
+        populateLeaveTypeSelect(leaveTypes);
+        loadLeaveRequests();
+      })
+      .withFailureHandler(function(error) {
+        hideLoading();
+        console.error('Error loading leave types:', error);
+        showToast('休暇種類の読み込みに失敗しました', 'error');
+      })
+      .getAllLeaveTypes();
+  }
+}
+
+function loadLeaveRequests() {
+  google.script.run
+    .withSuccessHandler(function(requests) {
+      hideLoading();
+      renderLeaveRequests(requests);
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error loading leave requests:', error);
+      showToast('休暇申請履歴の読み込みに失敗しました', 'error');
+    })
+    .getEmployeeLeaveRequests(currentEmployee.id, null);
+}
+
+function populateLeaveTypeSelect(leaveTypes) {
+  var select = document.getElementById('leave-type');
+  var fragment = document.createDocumentFragment();
+  
+  var defaultOption = document.createElement('option');
+  defaultOption.value = '';
+  defaultOption.textContent = '選択してください';
+  fragment.appendChild(defaultOption);
+  
+  if (leaveTypes && Array.isArray(leaveTypes)) {
+    for (var i = 0; i < leaveTypes.length; i++) {
+      var type = leaveTypes[i];
+      var option = document.createElement('option');
+      option.value = type.id;
+      option.textContent = type.name;
+      option.dataset.allowHalfDay = type.allowHalfDay ? 'true' : 'false';
+      option.dataset.allowHourly = type.allowHourly ? 'true' : 'false';
+      fragment.appendChild(option);
+    }
+  }
+  
+  select.innerHTML = '';
+  select.appendChild(fragment);
+}
+
+function loadLeaveBalanceData() {
+  if (!currentEmployee) return;
+  
+  var year = new Date().getFullYear();
+  
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(balances) {
+      hideLoading();
+      renderLeaveBalance(balances);
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error loading leave balance:', error);
+      showToast('休暇残数の読み込みに失敗しました', 'error');
+    })
+    .getAllLeaveBalances(currentEmployee.id, year);
+}
+
+function loadOvertimeData() {
+  if (!currentEmployee) return;
+  
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(summary) {
+      hideLoading();
+      
+      if (summary) {
+        renderOvertimeSummary(summary);
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error loading overtime data:', error);
+      showToast('残業データの読み込みに失敗しました', 'error');
+    })
+    .getOvertimeSummary(currentEmployee.id);
+}
+
+function loadPendingRequests() {
+  if (!currentEmployee) return;
+  
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(requests) {
+      hideLoading();
+      pendingRequestsCache = requests;
+      renderPendingRequests(requests);
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Error loading pending requests:', error);
+      showToast('承認待ち申請の読み込みに失敗しました', 'error');
+    })
+    .getPendingLeaveRequests(currentEmployee.id);
+}
+
+function loadAdminData() {
+  if (!currentEmployee) return;
+  
+  showLoading();
+  
+  // キャッシュがあればそれを使用
+  if (employeesCache && employeesCache.length > 0) {
+    hideLoading();
+    renderEmployeesTable(employeesCache);
+  } else {
+    google.script.run
+      .withSuccessHandler(function(employees) {
+        hideLoading();
+        employeesCache = employees;
+        renderEmployeesTable(employees);
+      })
+      .withFailureHandler(function(error) {
+        hideLoading();
+        console.error('Error loading admin data:', error);
+        showToast('管理者データの読み込みに失敗しました', 'error');
+      })
+      .getActiveEmployees();
+  }
+}
+
+function submitLeaveRequest(leaveTypeId, startDate, endDate, unit, hours, reason) {
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result && result.success) {
+        showToast('休暇申請が完了しました', 'success');
+        hideLeaveForm();
+        loadLeaveData();
+      } else {
+        var message = result && result.message ? result.message : '休暇申請に失敗しました';
+        showToast(message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Leave request error:', error);
+      showToast('休暇申請に失敗しました', 'error');
+    })
+    .createLeaveRequest(currentEmployee.id, leaveTypeId, startDate, endDate, unit, hours, reason);
+}
+
+function approveRequest(requestId, comment) {
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result && result.success) {
+        showToast('承認しました', 'success');
+        closeModal();
+        invalidateCache();
+        loadPendingRequests();
+        loadDashboard();
+      } else {
+        var message = result && result.message ? result.message : '承認に失敗しました';
+        showToast(message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Approve error:', error);
+      showToast('承認に失敗しました', 'error');
+    })
+    .approveLeaveRequest(requestId, currentEmployee.id, comment);
+}
+
+function rejectRequest(requestId, comment) {
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(result) {
+      hideLoading();
+      
+      if (result && result.success) {
+        showToast('却下しました', 'success');
+        closeModal();
+        invalidateCache();
+        loadPendingRequests();
+        loadDashboard();
+      } else {
+        var message = result && result.message ? result.message : '却下に失敗しました';
+        showToast(message, 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Reject error:', error);
+      showToast('却下に失敗しました', 'error');
+    })
+    .rejectLeaveRequest(requestId, currentEmployee.id, comment);
+}
+
+// ========================================
+// Login/Logout
+// ========================================
+function handleLogin() {
+  var employeeId = document.getElementById('employee-select').value;
+  if (!employeeId) {
+    showToast('社員を選択してください', 'warning');
+    return;
+  }
+
+  // キャッシュから従業員を検索
+  if (employeesCache && employeesCache.length > 0) {
+    currentEmployee = null;
+    for (var i = 0; i < employeesCache.length; i++) {
+      if (employeesCache[i].id === employeeId) {
+        currentEmployee = employeesCache[i];
+        break;
+      }
+    }
+    
+    if (currentEmployee) {
+      completeLogin();
+    } else {
+      showToast('従業員情報が見つかりません', 'error');
+    }
+    return;
+  }
+
+  // キャッシュがない場合はサーバーから取得
+  showLoading();
+  
+  google.script.run
+    .withSuccessHandler(function(employees) {
+      hideLoading();
+      
+      if (!employees || !Array.isArray(employees)) {
+        showToast('ログインに失敗しました', 'error');
+        return;
+      }
+      
+      employeesCache = employees;
+      
+      currentEmployee = null;
+      for (var i = 0; i < employees.length; i++) {
+        if (employees[i].id === employeeId) {
+          currentEmployee = employees[i];
+          break;
+        }
+      }
+      
+      if (currentEmployee) {
+        completeLogin();
+      } else {
+        showToast('従業員情報が見つかりません', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Login error:', error);
+      showToast('ログインに失敗しました', 'error');
+    })
+    .getActiveEmployees();
+}
+
+function completeLogin() {
+  document.getElementById('current-user').textContent = currentEmployee.name;
+  
+  // Show/hide menu items based on role
+  updateMenuVisibility();
+  
+  // Switch to main screen
+  document.getElementById('login-screen').classList.remove('active');
+  document.getElementById('main-screen').classList.add('active');
+  
+  // Load dashboard
+  loadDashboard();
+}
+
+function handleLogout() {
+  currentEmployee = null;
+  dashboardData = null;
+  pendingRequestsCache = null;
+  cacheTimestamp = null;
+  
+  document.getElementById('main-screen').classList.remove('active');
+  document.getElementById('login-screen').classList.add('active');
+  document.getElementById('employee-select').value = '';
+  
+  // Reset to dashboard
+  var navItems = document.querySelectorAll('.nav-item');
+  for (var i = 0; i < navItems.length; i++) {
+    navItems[i].classList.remove('active');
+    if (navItems[i].dataset.page === 'dashboard') {
+      navItems[i].classList.add('active');
+    }
+  }
+  
+  var pages = document.querySelectorAll('.page');
+  for (var j = 0; j < pages.length; j++) {
+    pages[j].classList.remove('active');
+    if (pages[j].id === 'page-dashboard') {
+      pages[j].classList.add('active');
+    }
+  }
+}
+
+function updateMenuVisibility() {
+  var role = currentEmployee.role;
+  
+  // Manager menu items
+  var managerItems = document.querySelectorAll('.manager-only');
+  for (var i = 0; i < managerItems.length; i++) {
+    if (role === 'admin' || role === 'manager') {
+      managerItems[i].classList.remove('hidden');
+    } else {
+      managerItems[i].classList.add('hidden');
+    }
+  }
+  
+  // Admin menu items
+  var adminItems = document.querySelectorAll('.admin-only');
+  for (var j = 0; j < adminItems.length; j++) {
+    if (role === 'admin') {
+      adminItems[j].classList.remove('hidden');
+    } else {
+      adminItems[j].classList.add('hidden');
+    }
+  }
+}
+
+// ========================================
+// Navigation
+// ========================================
+function toggleSidebar() {
+  var sidebar = document.getElementById('sidebar');
+  if (window.innerWidth <= 768) {
+    sidebar.classList.toggle('open');
+  } else {
+    sidebar.classList.toggle('collapsed');
+  }
+}
+
+function navigateTo(page) {
+  // Update nav items
+  var navItems = document.querySelectorAll('.nav-item');
+  for (var i = 0; i < navItems.length; i++) {
+    if (navItems[i].dataset.page === page) {
+      navItems[i].classList.add('active');
+    } else {
+      navItems[i].classList.remove('active');
+    }
+  }
+  
+  // Update pages
+  var pages = document.querySelectorAll('.page');
+  for (var j = 0; j < pages.length; j++) {
+    if (pages[j].id === 'page-' + page) {
+      pages[j].classList.add('active');
+    } else {
+      pages[j].classList.remove('active');
+    }
+  }
+  
+  // Close sidebar on mobile
+  if (window.innerWidth <= 768) {
+    document.getElementById('sidebar').classList.remove('open');
+  }
+  
+  // Load page data
+  loadPageData(page);
+}
+
+function loadPageData(page) {
+  if (!currentEmployee) return;
+  
+  switch (page) {
+    case 'dashboard':
+      loadDashboard();
+      break;
+    case 'attendance':
+      loadAttendanceData();
+      break;
+    case 'leave':
+      loadLeaveData();
+      break;
+    case 'leave-balance':
+      loadLeaveBalanceData();
+      break;
+    case 'overtime':
+      loadOvertimeData();
+      break;
+    case 'documents':
+      // 静的ページなので何もしない
+      break;
+    case 'approval':
+      loadPendingRequests();
+      break;
+    case 'admin':
+      loadAdminData();
+      break;
+  }
+}
+
+// ========================================
+// Dashboard
+// ========================================
+function updatePunchStatus(status) {
+  var statusIcon = document.querySelector('.status-icon');
+  var statusLabel = document.getElementById('status-label');
+  var statusTime = document.getElementById('status-time');
+  var clockInBtn = document.getElementById('clock-in-btn');
+  var clockOutBtn = document.getElementById('clock-out-btn');
+  
+  // Reset classes
+  statusIcon.className = 'status-icon';
+  
+  if (!status) {
+    statusLabel.textContent = '不明';
+    statusTime.textContent = '';
+    clockInBtn.disabled = false;
+    clockOutBtn.disabled = true;
+    return;
+  }
+  
+  switch (status.status) {
+    case 'not_clocked_in':
+      statusLabel.textContent = '未出勤';
+      statusTime.textContent = '';
+      clockInBtn.disabled = false;
+      clockOutBtn.disabled = true;
+      break;
+    case 'working':
+      statusIcon.classList.add('working');
+      statusLabel.textContent = '勤務中';
+      statusTime.textContent = '出勤: ' + (status.clockIn || '');
+      clockInBtn.disabled = true;
+      clockOutBtn.disabled = false;
+      break;
+    case 'clocked_out':
+      statusIcon.classList.add('clocked-out');
+      statusLabel.textContent = '退勤済み';
+      statusTime.textContent = (status.clockIn || '') + ' - ' + (status.clockOut || '') + ' (' + (status.actualHours || '') + ')';
+      clockInBtn.disabled = true;
+      clockOutBtn.disabled = true;
+      break;
+    default:
+      statusLabel.textContent = status.message || '不明';
+      statusTime.textContent = '';
+      clockInBtn.disabled = false;
+      clockOutBtn.disabled = true;
+  }
+}
+
+function updateRecentAttendance(records) {
+  var tbody = document.getElementById('recent-attendance-body');
+  var fragment = document.createDocumentFragment();
+  
+  if (!records || records.length === 0) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="5" class="text-center">データがありません</td>';
+    fragment.appendChild(tr);
+  } else {
+    // Show last 5 records in reverse order (newest first)
+    var displayRecords = records.slice().reverse().slice(0, 5);
+    
+    for (var i = 0; i < displayRecords.length; i++) {
+      var record = displayRecords[i];
+      var tr = document.createElement('tr');
+      tr.innerHTML = 
+        '<td>' + (record.date || '-') + '</td>' +
+        '<td>' + (record.clockIn || '-') + '</td>' +
+        '<td>' + (record.clockOut || '-') + '</td>' +
+        '<td>' + (record.actualHours || '-') + '</td>' +
+        '<td>' + (record.overtimeHours || '-') + '</td>';
+      fragment.appendChild(tr);
+    }
+  }
+  
+  tbody.innerHTML = '';
+  tbody.appendChild(fragment);
+}
+
+function showPunchMessage(message, type) {
+  var el = document.getElementById('punch-message');
+  el.textContent = message;
+  el.className = 'punch-message ' + type;
+  
+  setTimeout(function() {
+    el.textContent = '';
+    el.className = 'punch-message';
+  }, 5000);
+}
+
+// ========================================
+// Attendance
+// ========================================
+function renderAttendanceTable(records, yearMonth) {
+  var tbody = document.getElementById('attendance-body');
+  var fragment = document.createDocumentFragment();
+  
+  var parts = yearMonth.split('/');
+  var year = parseInt(parts[0], 10);
+  var month = parseInt(parts[1], 10);
+  var daysInMonth = new Date(year, month, 0).getDate();
+  var dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  
+  // レコードをマップに変換して高速検索
+  var recordMap = {};
+  if (records && Array.isArray(records)) {
+    for (var i = 0; i < records.length; i++) {
+      recordMap[records[i].date] = records[i];
+    }
+  }
+  
+  for (var day = 1; day <= daysInMonth; day++) {
+    var date = new Date(year, month - 1, day);
+    var dateStr = year + '/' + String(month).padStart(2, '0') + '/' + String(day).padStart(2, '0');
+    var dayOfWeek = date.getDay();
+    var dayName = dayNames[dayOfWeek];
+    
+    var record = recordMap[dateStr] || null;
+    
+    var tr = document.createElement('tr');
+    
+    // Weekend styling
+    if (dayOfWeek === 0 || dayOfWeek === 6) {
+      tr.classList.add('weekend');
+    }
+    
+    var dayClass = '';
+    if (dayOfWeek === 0) {
+      dayClass = 'text-danger';
+    } else if (dayOfWeek === 6) {
+      dayClass = 'text-primary';
+    }
+    
+    tr.innerHTML = 
+      '<td>' + dateStr + '</td>' +
+      '<td class="' + dayClass + '">' + dayName + '</td>' +
+      '<td>' + (record ? (record.workType || '-') : '-') + '</td>' +
+      '<td>' + (record ? (record.clockIn || '-') : '-') + '</td>' +
+      '<td>' + (record ? (record.clockOut || '-') : '-') + '</td>' +
+      '<td>' + (record && record.breakMinutes ? record.breakMinutes + '分' : '-') + '</td>' +
+      '<td>' + (record ? (record.actualHours || '-') : '-') + '</td>' +
+      '<td>' + (record ? (record.overtimeHours || '-') : '-') + '</td>' +
+      '<td>' + (record ? (record.note || '') : '') + '</td>';
+    
+    fragment.appendChild(tr);
+  }
+  
+  tbody.innerHTML = '';
+  tbody.appendChild(fragment);
+}
+
+function calculateMonthlyStats(records) {
+  var workDays = 0;
+  var actualMinutes = 0;
+  var overtimeMinutes = 0;
+  var nightMinutes = 0;
+  
+  if (records && Array.isArray(records)) {
+    for (var i = 0; i < records.length; i++) {
+      var record = records[i];
+      if (record.clockIn && record.clockOut) {
+        workDays++;
+        actualMinutes += timeToMinutes(record.actualHours);
+        overtimeMinutes += timeToMinutes(record.overtimeHours);
+        nightMinutes += timeToMinutes(record.nightHours);
+      }
+    }
+  }
+  
+  document.getElementById('stat-work-days').textContent = workDays + '日';
+  document.getElementById('stat-actual-hours').textContent = minutesToTime(actualMinutes);
+  document.getElementById('stat-overtime').textContent = minutesToTime(overtimeMinutes);
+  document.getElementById('stat-night-hours').textContent = minutesToTime(nightMinutes);
+}
+
+// ========================================
+// Leave Management
+// ========================================
+function renderLeaveRequests(requests) {
+  var tbody = document.getElementById('leave-requests-body');
+  var fragment = document.createDocumentFragment();
+  
+  if (!requests || requests.length === 0) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="6" class="text-center">申請履歴がありません</td>';
+    fragment.appendChild(tr);
+  } else {
+    for (var i = 0; i < requests.length; i++) {
+      var req = requests[i];
+      var tr = document.createElement('tr');
+      
+      var statusBadge = '';
+      switch (req.status) {
+        case '承認':
+          statusBadge = '<span class="badge badge-success">承認</span>';
+          break;
+        case '却下':
+          statusBadge = '<span class="badge badge-danger">却下</span>';
+          break;
+        case '申請中':
+          statusBadge = '<span class="badge badge-info">申請中</span>';
+          break;
+        default:
+          statusBadge = '<span class="badge badge-secondary">' + (req.status || '-') + '</span>';
+      }
+      
+      var requestedDate = req.requestedAt ? req.requestedAt.split(' ')[0] : '-';
+      var period = req.startDate;
+      if (req.startDate !== req.endDate) {
+        period += ' ～ ' + req.endDate;
+      }
+      
+      tr.innerHTML = 
+        '<td>' + requestedDate + '</td>' +
+        '<td>' + (req.leaveTypeName || '-') + '</td>' +
+        '<td>' + period + '</td>' +
+        '<td>' + (req.daysTaken || 0) + '日</td>' +
+        '<td>' + (req.reason || '-') + '</td>' +
+        '<td>' + statusBadge + '</td>';
+      
+      fragment.appendChild(tr);
+    }
+  }
+  
+  tbody.innerHTML = '';
+  tbody.appendChild(fragment);
+}
+
+function showLeaveForm() {
+  document.getElementById('leave-form-card').classList.remove('hidden');
+  document.getElementById('leave-form').reset();
+  document.getElementById('hours-group').classList.add('hidden');
+  
+  // Set default dates
+  var today = new Date();
+  var year = today.getFullYear();
+  var month = String(today.getMonth() + 1).padStart(2, '0');
+  var day = String(today.getDate()).padStart(2, '0');
+  var todayStr = year + '-' + month + '-' + day;
+  
+  document.getElementById('leave-start').value = todayStr;
+  document.getElementById('leave-end').value = todayStr;
+}
+
+function hideLeaveForm() {
+  document.getElementById('leave-form-card').classList.add('hidden');
+}
+
+function handleLeaveUnitChange() {
+  var unit = document.getElementById('leave-unit').value;
+  var hoursGroup = document.getElementById('hours-group');
+  
+  if (unit === '時間') {
+    hoursGroup.classList.remove('hidden');
+  } else {
+    hoursGroup.classList.add('hidden');
+  }
+  
+  if (unit === '午前' || unit === '午後' || unit === '時間') {
+    document.getElementById('leave-end').value = document.getElementById('leave-start').value;
+  }
+}
+
+function handleLeaveSubmit(e) {
+  e.preventDefault();
+  
+  var leaveTypeId = document.getElementById('leave-type').value;
+  var startDate = document.getElementById('leave-start').value;
+  var endDate = document.getElementById('leave-end').value;
+  var unit = document.getElementById('leave-unit').value;
+  var hoursValue = document.getElementById('leave-hours').value;
+  var reason = document.getElementById('leave-reason').value;
+  
+  if (!leaveTypeId || !startDate || !endDate || !reason) {
+    showToast('必須項目を入力してください', 'warning');
+    return;
+  }
+  
+  var hours = hoursValue ? parseInt(hoursValue, 10) : null;
+  
+  submitLeaveRequest(leaveTypeId, startDate, endDate, unit, hours, reason);
+}
+
+// ========================================
+// Leave Balance
+// ========================================
+function renderLeaveBalance(balances) {
+  var tbody = document.getElementById('leave-balance-body');
+  var fragment = document.createDocumentFragment();
+  
+  if (!balances || balances.length === 0) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="6" class="text-center">データがありません</td>';
+    fragment.appendChild(tr);
+  } else {
+    for (var i = 0; i < balances.length; i++) {
+      var balance = balances[i];
+      var total = (balance.carriedOver || 0) + (balance.granted || 0);
+      var percentage = total > 0 ? Math.round((balance.remaining / total) * 100) : 0;
+      
+      var progressClass = '';
+      if (percentage < 30) {
+        progressClass = 'danger';
+      } else if (percentage < 60) {
+        progressClass = 'warning';
+      }
+      
+      var tr = document.createElement('tr');
+      tr.innerHTML = 
+        '<td>' + (balance.leaveTypeName || '-') + '</td>' +
+        '<td>' + (balance.carriedOver || 0) + '日</td>' +
+        '<td>' + (balance.granted || 0) + '日</td>' +
+        '<td>' + (balance.used || 0) + '日</td>' +
+        '<td><strong>' + (balance.remaining || 0) + '日</strong></td>' +
+        '<td>' +
+          '<div class="balance-bar" style="width: 100px; height: 8px; background: var(--light-color); border-radius: 6px; overflow: hidden;">' +
+            '<div class="balance-fill ' + progressClass + '" style="height: 100%; width: ' + percentage + '%; background: var(--primary-color); border-radius: 6px; transition: width 0.5s ease;"></div>' +
+          '</div>' +
+        '</td>';
+      fragment.appendChild(tr);
+    }
+  }
+  
+  tbody.innerHTML = '';
+  tbody.appendChild(fragment);
+}
+
+// ========================================
+// Overtime / 36 Agreement
+// ========================================
+function renderOvertimeSummary(summary) {
+  if (!summary) return;
+  
+  // Status badge
+  var badge = document.getElementById('agreement-badge');
+  var status = summary.status || '--';
+  badge.textContent = status;
+  badge.className = 'badge badge-lg';
+  
+  switch (status) {
+    case '正常':
+      badge.classList.add('badge-success');
+      break;
+    case '警告':
+      badge.classList.add('badge-warning');
+      break;
+    case '超過':
+      badge.classList.add('badge-danger');
+      break;
+  }
+  
+  // Warnings
+  var warningsEl = document.getElementById('agreement-warnings');
+  var warningFragment = document.createDocumentFragment();
+  
+  if (summary.warnings && summary.warnings.length > 0) {
+    for (var i = 0; i < summary.warnings.length; i++) {
+      var div = document.createElement('div');
+      div.className = 'warning-item';
+      div.innerHTML = '<i class="fas fa-exclamation-triangle"></i><span>' + summary.warnings[i] + '</span>';
+      warningFragment.appendChild(div);
+    }
+  }
+  
+  warningsEl.innerHTML = '';
+  warningsEl.appendChild(warningFragment);
+  
+  // Monthly progress
+  var monthlyLimit = summary.monthly && summary.monthly.limit ? summary.monthly.limit : 45;
+  var monthlyOvertime = summary.monthly && summary.monthly.overtime ? summary.monthly.overtime : '0:00';
+  var monthlyPercentage = summary.monthly && summary.monthly.percentage ? summary.monthly.percentage : 0;
+  
+  document.getElementById('monthly-overtime-detail').textContent = monthlyOvertime + ' / ' + monthlyLimit + ':00';
+  
+  var monthlyBar = document.getElementById('monthly-overtime-bar');
+  monthlyBar.style.width = Math.min(monthlyPercentage, 100) + '%';
+  monthlyBar.className = 'progress-fill';
+  if (monthlyPercentage >= 100) {
+    monthlyBar.classList.add('danger');
+  } else if (monthlyPercentage >= 80) {
+    monthlyBar.classList.add('warning');
+  }
+  
+  // Yearly progress
+  var yearlyLimit = summary.yearly && summary.yearly.limit ? summary.yearly.limit : 360;
+  var yearlyOvertime = summary.yearly && summary.yearly.overtime ? summary.yearly.overtime : '0:00';
+  var yearlyPercentage = summary.yearly && summary.yearly.percentage ? summary.yearly.percentage : 0;
+  
+  document.getElementById('yearly-overtime-detail').textContent = yearlyOvertime + ' / ' + yearlyLimit + ':00';
+  
+  var yearlyBar = document.getElementById('yearly-overtime-bar');
+  yearlyBar.style.width = Math.min(yearlyPercentage, 100) + '%';
+  yearlyBar.className = 'progress-fill';
+  if (yearlyPercentage >= 100) {
+    yearlyBar.classList.add('danger');
+  } else if (yearlyPercentage >= 80) {
+    yearlyBar.classList.add('warning');
+  }
+  
+  // Info grid
+  document.getElementById('info-monthly-limit').textContent = monthlyLimit + '時間';
+  document.getElementById('info-yearly-limit').textContent = yearlyLimit + '時間';
+  
+  var specialMonthCount = summary.yearly && summary.yearly.specialMonthCount ? summary.yearly.specialMonthCount : 0;
+  document.getElementById('info-special-months').textContent = specialMonthCount + ' / 6回';
+  
+  var nightWork = summary.monthly && summary.monthly.nightWork ? summary.monthly.nightWork : '0:00';
+  document.getElementById('info-night-hours').textContent = nightWork;
+}
+
+// ========================================
+// Approval (Manager/Admin)
+// ========================================
+var currentApprovalRequest = null;
+
+function renderPendingRequests(requests) {
+  var tbody = document.getElementById('pending-requests-body');
+  var noMessage = document.getElementById('no-pending-message');
+  var fragment = document.createDocumentFragment();
+  
+  if (!requests || requests.length === 0) {
+    noMessage.classList.remove('hidden');
+    tbody.parentElement.parentElement.classList.add('hidden');
+    return;
+  }
+  
+  noMessage.classList.add('hidden');
+  tbody.parentElement.parentElement.classList.remove('hidden');
+  
+  for (var i = 0; i < requests.length; i++) {
+    var req = requests[i];
+    var tr = document.createElement('tr');
+    
+    var period = req.startDate || '';
+    if (req.startDate !== req.endDate && req.endDate) {
+      period += ' ～ ' + req.endDate;
+    }
+    
+    var requestedDate = req.requestedAt ? req.requestedAt.split(' ')[0] : '-';
+    
+    tr.innerHTML = 
+      '<td>' + (req.employeeName || '-') + '</td>' +
+      '<td>' + (req.department || '-') + '</td>' +
+      '<td>' + (req.leaveTypeName || '-') + '</td>' +
+      '<td>' + period + '</td>' +
+      '<td>' + (req.daysTaken || 0) + '日</td>' +
+      '<td>' + (req.reason || '-') + '</td>' +
+      '<td>' + requestedDate + '</td>' +
+      '<td>' +
+        '<button class="btn btn-sm btn-primary" onclick="openApprovalModal(\'' + req.requestId + '\')">' +
+          '<i class="fas fa-check"></i> 確認' +
+        '</button>' +
+      '</td>';
+    
+    fragment.appendChild(tr);
+  }
+  
+  tbody.innerHTML = '';
+  tbody.appendChild(fragment);
+}
+
+function openApprovalModal(requestId) {
+  if (!pendingRequestsCache || !Array.isArray(pendingRequestsCache)) {
+    showToast('申請情報を再読み込みしてください', 'warning');
+    loadPendingRequests();
+    return;
+  }
+  
+  currentApprovalRequest = null;
+  for (var i = 0; i < pendingRequestsCache.length; i++) {
+    if (pendingRequestsCache[i].requestId === requestId) {
+      currentApprovalRequest = pendingRequestsCache[i];
+      break;
+    }
+  }
+  
+  if (!currentApprovalRequest) {
+    showToast('申請情報が見つかりません', 'error');
+    loadPendingRequests();
+    return;
+  }
+  
+  var details = document.getElementById('approval-details');
+  
+  var period = currentApprovalRequest.startDate || '';
+  if (currentApprovalRequest.startDate !== currentApprovalRequest.endDate && currentApprovalRequest.endDate) {
+    period += ' ～ ' + currentApprovalRequest.endDate;
+  }
+  
+  details.innerHTML = 
+    '<div class="info-grid">' +
+      '<div class="info-item">' +
+        '<span class="info-label">申請者</span>' +
+        '<span class="info-value">' + (currentApprovalRequest.employeeName || '-') + '</span>' +
+      '</div>' +
+      '<div class="info-item">' +
+        '<span class="info-label">部署</span>' +
+        '<span class="info-value">' + (currentApprovalRequest.department || '-') + '</span>' +
+      '</div>' +
+      '<div class="info-item">' +
+        '<span class="info-label">休暇種類</span>' +
+        '<span class="info-value">' + (currentApprovalRequest.leaveTypeName || '-') + '</span>' +
+      '</div>' +
+      '<div class="info-item">' +
+        '<span class="info-label">期間</span>' +
+        '<span class="info-value">' + period + '</span>' +
+      '</div>' +
+      '<div class="info-item">' +
+        '<span class="info-label">日数</span>' +
+        '<span class="info-value">' + (currentApprovalRequest.daysTaken || 0) + '日</span>' +
+      '</div>' +
+      '<div class="info-item">' +
+        '<span class="info-label">理由</span>' +
+        '<span class="info-value">' + (currentApprovalRequest.reason || '-') + '</span>' +
+      '</div>' +
+    '</div>';
+  
+  document.getElementById('approval-comment').value = '';
+  document.getElementById('approval-modal').classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('approval-modal').classList.remove('active');
+  currentApprovalRequest = null;
+}
+
+function handleApproval(isApprove) {
+  if (!currentApprovalRequest) {
+    showToast('申請情報がありません', 'error');
+    return;
+  }
+  
+  var comment = document.getElementById('approval-comment').value || '';
+  
+  if (isApprove) {
+    approveRequest(currentApprovalRequest.requestId, comment);
+  } else {
+    rejectRequest(currentApprovalRequest.requestId, comment);
+  }
+}
+
+// ========================================
+// Admin
+// ========================================
+function renderEmployeesTable(employees) {
+  var tbody = document.getElementById('employees-body');
+  var fragment = document.createDocumentFragment();
+  
+  if (!employees || employees.length === 0) {
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="7" class="text-center">データがありません</td>';
+    fragment.appendChild(tr);
+  } else {
+    for (var i = 0; i < employees.length; i++) {
+      var emp = employees[i];
+      var tr = document.createElement('tr');
+      
+      var roleBadgeClass = 'badge-info';
+      if (emp.role === 'admin') {
+        roleBadgeClass = 'badge-danger';
+      } else if (emp.role === 'manager') {
+        roleBadgeClass = 'badge-warning';
+      }
+      
+      var statusBadgeClass = emp.status === '在籍' ? 'badge-success' : 'badge-secondary';
+      
+      tr.innerHTML = 
+        '<td>' + (emp.id || '-') + '</td>' +
+        '<td>' + (emp.name || '-') + '</td>' +
+        '<td>' + (emp.department || '-') + '</td>' +
+        '<td>' + (emp.position || '-') + '</td>' +
+        '<td>' + (emp.workPatternId || '-') + '</td>' +
+        '<td><span class="badge ' + roleBadgeClass + '">' + (emp.role || '-') + '</span></td>' +
+        '<td><span class="badge ' + statusBadgeClass + '">' + (emp.status || '-') + '</span></td>';
+      
+      fragment.appendChild(tr);
+    }
+  }
+  
+  tbody.innerHTML = '';
+  tbody.appendChild(fragment);
+}
+
+// ========================================
+// Documents (規程・マニュアル)
+// ========================================
+var documentCache = null;
+
+function openDocument(docId) {
+  showLoading();
+  
+  // キャッシュがあれば先に表示
+  if (documentCache && documentCache[docId]) {
+    displayDocument(documentCache[docId]);
+    hideLoading();
+    return;
+  }
+  
+  google.script.run
+    .withSuccessHandler(function(doc) {
+      hideLoading();
+      
+      if (doc) {
+        if (!documentCache) documentCache = {};
+        documentCache[docId] = doc;
+        displayDocument(doc);
+      } else {
+        showToast('ドキュメントが見つかりません', 'error');
+      }
+    })
+    .withFailureHandler(function(error) {
+      hideLoading();
+      console.error('Document load error:', error);
+      showToast('ドキュメントの読み込みに失敗しました', 'error');
+    })
+    .getDocumentById(docId);
+}
+
+function displayDocument(doc) {
+  document.getElementById('document-title').textContent = doc.title;
+  document.getElementById('document-content').innerHTML = doc.content;
+  document.getElementById('document-modal').classList.add('active');
+}
+
+function closeDocumentModal() {
+  document.getElementById('document-modal').classList.remove('active');
+}
+
+function printDocument() {
+  window.print();
+}
+
+// ========================================
+// Utility Functions
+// ========================================
+function setTodayDate() {
+  var today = new Date();
+  var options = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
+  var dateEl = document.getElementById('today-date');
+  if (dateEl) {
+    dateEl.textContent = today.toLocaleDateString('ja-JP', options);
+  }
+}
+
+function timeToMinutes(timeStr) {
+  if (!timeStr || timeStr === '-' || timeStr === '') {
+    return 0;
+  }
+  
+  var str = String(timeStr);
+  var parts = str.split(':');
+  
+  if (parts.length < 2) {
+    return 0;
+  }
+  
+  var hours = parseInt(parts[0], 10) || 0;
+  var minutes = parseInt(parts[1], 10) || 0;
+  
+  return hours * 60 + minutes;
+}
+
+function minutesToTime(minutes) {
+  if (!minutes || minutes < 0) {
+    minutes = 0;
+  }
+  
+  var hours = Math.floor(minutes / 60);
+  var mins = minutes % 60;
+  
+  return hours + ':' + String(mins).padStart(2, '0');
+}
+
+function showLoading() {
+  var loading = document.getElementById('loading');
+  if (loading) {
+    loading.classList.remove('hidden');
+  }
+}
+
+function hideLoading() {
+  var loading = document.getElementById('loading');
+  if (loading) {
+    loading.classList.add('hidden');
+  }
+}
+
+function showToast(message, type) {
+  if (!type) {
+    type = 'info';
+  }
+  
+  var container = document.getElementById('toast-container');
+  if (!container) {
+    return;
+  }
+  
+  var toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  
+  var icon = 'info-circle';
+  if (type === 'success') {
+    icon = 'check-circle';
+  } else if (type === 'error') {
+    icon = 'times-circle';
+  } else if (type === 'warning') {
+    icon = 'exclamation-triangle';
+  }
+  
+  toast.innerHTML = '<i class="fas fa-' + icon + '"></i><span>' + message + '</span>';
+  container.appendChild(toast);
+  
+  setTimeout(function() {
+    if (toast.parentNode) {
+      toast.parentNode.removeChild(toast);
+    }
+  }, 4000);
+}
+</script>

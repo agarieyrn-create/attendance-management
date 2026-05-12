@@ -1,0 +1,25 @@
+# Google Apps Script
+*.gs
+.clasp.json
+.clasprc.json
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.iml
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temp
+tmp/
+temp/
