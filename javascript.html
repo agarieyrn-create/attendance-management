@@ -1391,12 +1391,13 @@ function openDocument(docId) {
   }
   
   showLoading();
+  document.getElementById('document-loading').classList.remove('hidden');
   
   google.script.run
     .withSuccessHandler(function(doc) {
-      hideLoading();
-      
       if (!doc) {
+        hideLoading();
+        document.getElementById('document-loading').classList.add('hidden');
         showToast('ドキュメントが見つかりません', 'error');
         return;
       }
@@ -1406,6 +1407,7 @@ function openDocument(docId) {
     })
     .withFailureHandler(function(error) {
       hideLoading();
+      document.getElementById('document-loading').classList.add('hidden');
       console.error('Error loading document:', error);
       showToast('ドキュメントの読み込みに失敗しました', 'error');
     })
@@ -1414,16 +1416,44 @@ function openDocument(docId) {
 
 function displayDocument(doc) {
   document.getElementById('document-title').textContent = doc.title;
-  document.getElementById('document-content').innerHTML = doc.content;
+  
+  // Googleドキュメントをiframeで表示
+  var iframe = document.getElementById('document-iframe');
+  var docUrl = doc.url || '';
+  
+  // /edit を /preview に変換して埋め込み表示
+  var embedUrl = docUrl.replace('\/edit', '\/preview');
+  iframe.src = embedUrl;
+  
+  // 新しいタブで開くボタンの設定
+  var openBtn = document.getElementById('open-doc-new-tab');
+  openBtn.onclick = function() {
+    window.open(docUrl, '_blank');
+  };
+  
+  // ローディング非表示
+  document.getElementById('document-loading').classList.add('hidden');
+  hideLoading();
+  
+  // モーダル表示
   document.getElementById('document-modal').classList.add('active');
 }
 
 function closeDocumentModal() {
   document.getElementById('document-modal').classList.remove('active');
+  document.getElementById('document-iframe').src = 'about:blank';
 }
 
 function printDocument() {
-  window.print();
+  var iframe = document.getElementById('document-iframe');
+  if (iframe && iframe.src && iframe.src !== 'about:blank') {
+    // iframe内の印刷を試みる
+    try {
+      iframe.contentWindow.print();
+    } catch(e) {
+      window.open(iframe.src, '_blank');
+    }
+  }
 }
 
 // ========================================

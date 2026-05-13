@@ -640,18 +640,24 @@
 
   <!-- ドキュメント詳細モーダル -->
   <div id="document-modal" class="modal">
-    <div class="modal-content modal-large">
+    <div class="modal-content modal-full">
       <div class="modal-header">
         <h3 id="document-title">ドキュメント</h3>
         <button class="modal-close" onclick="closeDocumentModal()">&times;</button>
       </div>
       <div class="modal-body">
-        <div id="document-content" class="document-content"></div>
+        <div id="document-iframe-container" class="document-iframe-container">
+          <iframe id="document-iframe" class="document-iframe" src="about:blank" frameborder="0"></iframe>
+        </div>
+        <div id="document-loading" class="document-loading">
+          <div class="loading-spinner"></div>
+          <p>ドキュメントを読み込み中...</p>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline" onclick="closeDocumentModal()">閉じる</button>
-        <button class="btn btn-primary" onclick="printDocument()">
-          <i class="fas fa-print"></i> 印刷
+        <button id="open-doc-new-tab" class="btn btn-primary">
+          <i class="fas fa-external-link-alt"></i> 新しいタブで開く
         </button>
       </div>
     </div>
