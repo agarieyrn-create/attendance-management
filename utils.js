@@ -1,0 +1,325 @@
+/**
+ * 勤怠管理システム - ユーティリティ関数
+ */
+
+/**
+ * シートを取得
+ */
+function getSheet(sheetName) {
+  try {
+    var ss = getSpreadsheet();
+    var sheet = ss.getSheetByName(sheetName);
+    
+    if (!sheet) {
+      console.error('シートが見つかりません: ' + sheetName);
+      return null;
+    }
+    
+    return sheet;
+  } catch (error) {
+    console.error('getSheet error:', error);
+    return null;
+  }
+}
+
+/**
+ * シートの全データを取得（ヘッダー除く）
+ */
+function getSheetData(sheetName) {
+  var sheet = getSheet(sheetName);
+  
+  if (!sheet) {
+    return [];
+  }
+  
+  var data = sheet.getDataRange().getValues();
+  
+  if (data.length <= 1) {
+    return [];
+  }
+  
+  return data.slice(1);
+}
+
+/**
+ * シートにデータを追加
+ */
+function appendToSheet(sheetName, rowData) {
+  var sheet = getSheet(sheetName);
+  
+  if (!sheet) {
+    console.error('appendToSheet: シートが見つかりません - ' + sheetName);
+    return false;
+  }
+  
+  sheet.appendRow(rowData);
+  return true;
+}
+
+/**
+ * 日付をフォーマット（yyyy/MM/dd）
+ */
+function formatDate(date) {
+  if (!date) {
+    return '';
+  }
+  
+  if (typeof date === 'string') {
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(date)) {
+      return date;
+    }
+    date = new Date(date);
+  }
+  
+  if (!(date instanceof Date) || isNaN(date.getTime())) {
+    return '';
+  }
+  
+  return Utilities.formatDate(date, 'Asia/Tokyo', 'yyyy/MM/dd');
+}
+
+/**
+ * 日時をフォーマット（yyyy/MM/dd HH:mm:ss）
+ */
+function formatDateTime(date) {
+  if (!date) {
+    return '';
+  }
+  
+  if (typeof date === 'string') {
+    date = new Date(date);
+  }
+  
+  if (!(date instanceof Date) || isNaN(date.getTime())) {
+    return '';
+  }
+  
+  return Utilities.formatDate(date, 'Asia/Tokyo', 'yyyy/MM/dd HH:mm:ss');
+}
+
+/**
+ * 時刻をフォーマット（HH:mm）
+ */
+function formatTime(date) {
+  if (!date) {
+    return '';
+  }
+  
+  if (typeof date === 'string') {
+    if (/^\d{1,2}:\d{2}$/.test(date)) {
+      return date;
+    }
+    date = new Date(date);
+  }
+  
+  if (!(date instanceof Date) || isNaN(date.getTime())) {
+    return '';
+  }
+  
+  return Utilities.formatDate(date, 'Asia/Tokyo', 'HH:mm');
+}
+
+/**
+ * 時刻文字列を分に変換（"HH:mm" → 分）
+ */
+function timeToMinutes(timeStr) {
+  if (!timeStr) {
+    return 0;
+  }
+  
+  if (typeof timeStr === 'object' && timeStr instanceof Date) {
+    return timeStr.getHours() * 60 + timeStr.getMinutes();
+  }
+  
+  var str = String(timeStr);
+  var parts = str.split(':');
+  
+  if (parts.length < 2) {
+    return 0;
+  }
+  
+  var hours = parseInt(parts[0], 10) || 0;
+  var minutes = parseInt(parts[1], 10) || 0;
+  
+  return hours * 60 + minutes;
+}
+
+/**
+ * 分を時刻文字列に変換（分 → "H:mm"）
+ */
+function minutesToTime(minutes) {
+  if (!minutes || minutes < 0) {
+    minutes = 0;
+  }
+  
+  var hours = Math.floor(minutes / 60);
+  var mins = minutes % 60;
+  
+  return hours + ':' + String(mins).padStart(2, '0');
+}
+
+/**
+ * 2つの時刻間の分数を計算
+ */
+function calculateMinutesBetween(startTime, endTime) {
+  var startMinutes = timeToMinutes(startTime);
+  var endMinutes = timeToMinutes(endTime);
+  
+  if (endMinutes < startMinutes) {
+    endMinutes += 24 * 60;
+  }
+  
+  return endMinutes - startMinutes;
+}
+
+/**
+ * 一意のIDを生成
+ */
+function generateId(prefix) {
+  var now = new Date();
+  var dateStr = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyyMMdd');
+  var random = Math.floor(Math.random() * 1000);
+  var randomStr = String(random).padStart(3, '0');
+  
+  return prefix + dateStr + randomStr;
+}
+
+/**
+ * 今日の日付を取得
+ */
+function getToday() {
+  return new Date();
+}
+
+/**
+ * 現在時刻を取得
+ */
+function getNow() {
+  return new Date();
+}
+
+/**
+ * 日付が祝日・休日かチェック
+ */
+function isHoliday(date) {
+  var dateStr = formatDate(date);
+  var calendarData = getSheetData(SHEET_NAMES.CALENDAR);
+  
+  for (var i = 0; i < calendarData.length; i++) {
+    if (formatDate(calendarData[i][0]) === dateStr) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+/**
+ * 日付が週末かチェック
+ */
+function isWeekend(date) {
+  if (typeof date === 'string') {
+    date = new Date(date);
+  }
+  
+  var day = date.getDay();
+  return day === 0 || day === 6;
+}
+
+/**
+ * 営業日かどうかチェック
+ */
+function isWorkingDay(date) {
+  return !isWeekend(date) && !isHoliday(date);
+}
+
+/**
+ * 年度を取得（4月始まり）
+ */
+function getFiscalYear(date) {
+  if (typeof date === 'string') {
+    date = new Date(date);
+  }
+  
+  var year = date.getFullYear();
+  var month = date.getMonth() + 1;
+  var fiscalYearStart = parseInt(getSetting('FISCAL_YEAR_START', '04'), 10);
+  
+  if (month < fiscalYearStart) {
+    return year - 1;
+  }
+  
+  return year;
+}
+
+/**
+ * 年月を取得（"yyyy/MM"形式）
+ */
+function getYearMonth(date) {
+  if (typeof date === 'string') {
+    date = new Date(date);
+  }
+  
+  return Utilities.formatDate(date, 'Asia/Tokyo', 'yyyy/MM');
+}
+
+/**
+ * JSONレスポンスを作成
+ */
+function createJsonResponse(data) {
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+/**
+ * 成功レスポンス
+ */
+function successResponse(data, message) {
+  if (data === undefined) {
+    data = null;
+  }
+  if (message === undefined) {
+    message = 'Success';
+  }
+  
+  return {
+    success: true,
+    message: message,
+    data: data,
+    timestamp: formatDateTime(getNow())
+  };
+}
+
+/**
+ * エラーレスポンス
+ */
+function errorResponse(message, code) {
+  if (code === undefined) {
+    code = 'ERROR';
+  }
+  
+  return {
+    success: false,
+    message: message,
+    errorCode: code,
+    timestamp: formatDateTime(getNow())
+  };
+}
+
+/**
+ * 残業時間の丸め処理
+ */
+function roundOvertimeMinutes(minutes) {
+  var unit = parseInt(getSetting('OVERTIME_UNIT', '15'), 10);
+  var roundMethod = getSetting('OVERTIME_ROUND', '切り捨て');
+  
+  if (roundMethod === '切り上げ') {
+    return Math.ceil(minutes / unit) * unit;
+  } else if (roundMethod === '四捨五入') {
+    return Math.round(minutes / unit) * unit;
+  } else {
+    return Math.floor(minutes / unit) * unit;
+  }
+}
+
